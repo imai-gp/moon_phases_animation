@@ -29,15 +29,16 @@
             background: #64748b; 
         }
     </style>
+  <!-- Update importmap to use reliable ESM CDN -->
   <script type="importmap">
 {
   "imports": {
-    "react-dom/client": "https://aistudiocdn.com/react-dom@^19.2.0/client",
-    "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.294.0",
+    "@google/genai": "https://esm.sh/@google/genai@0.1.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/"
   }
 }
 </script>
@@ -55,25 +56,25 @@
         // Safely access process.env for the API Key without crashing in browser
         const getApiKey = () => {
             try {
-                return typeof process !== 'undefined' ? process.env.API_KEY : undefined;
+                return typeof process !== 'undefined' && process.env ? process.env.API_KEY : undefined;
             } catch (e) {
                 return undefined;
             }
         };
 
-        // --- Types ---
-        enum PhaseType {
-            NEW_MOON = "新月 (しんげつ)",
-            WAXING_CRESCENT = "三日月 (みかづき)",
-            FIRST_QUARTER = "上弦の月 (じょうげんのつき)",
-            WAXING_GIBBOUS = "十三夜 (じゅうさんや)",
-            FULL_MOON = "満月 (まんげつ)",
-            WANING_GIBBOUS = "十八夜 (じゅうはちや)",
-            LAST_QUARTER = "下弦の月 (かげんのつき)",
-            WANING_CRESCENT = "二十六夜 (にじゅうろくや)",
-        }
+        // --- Types & Constants ---
+        // Replaced enum with const object to prevent "ReferenceError: PhaseType is not defined" in Babel Standalone
+        const PhaseType = {
+            NEW_MOON: "新月 (しんげつ)",
+            WAXING_CRESCENT: "三日月 (みかづき)",
+            FIRST_QUARTER: "上弦の月 (じょうげんのつき)",
+            WAXING_GIBBOUS: "十三夜 (じゅうさんや)",
+            FULL_MOON: "満月 (まんげつ)",
+            WANING_GIBBOUS: "十八夜 (じゅうはちや)",
+            LAST_QUARTER: "下弦の月 (かげんのつき)",
+            WANING_CRESCENT: "二十六夜 (にじゅうろくや)",
+        };
 
-        // --- Constants ---
         const PHASE_DATA = [
             {
                 type: PhaseType.NEW_MOON,
