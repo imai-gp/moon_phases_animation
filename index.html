@@ -6,6 +6,8 @@
     <title>Moon Phase Explorer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+    <!-- Load Babel for browser-side compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;700&display=swap" rel="stylesheet">
     <style>
         body {
@@ -30,17 +32,528 @@
   <script type="importmap">
 {
   "imports": {
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react-dom/client": "https://aistudiocdn.com/react-dom@^19.2.0/client",
     "lucide-react": "https://aistudiocdn.com/lucide-react@^0.554.0",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0"
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
   }
 }
 </script>
 </head>
   <body class="bg-slate-950 text-slate-50 overflow-x-hidden">
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
+    
+    <!-- Inline Application Logic for No-Build Deployment -->
+    <script type="text/babel" data-type="module" data-presets="react,typescript">
+        import React, { useState, useEffect, useRef, useCallback } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { Play, Pause, RotateCcw, Download, MessageCircle, Loader2 } from 'lucide-react';
+        import { GoogleGenAI } from "@google/genai";
+
+        // Safely access process.env for the API Key without crashing in browser
+        const getApiKey = () => {
+            try {
+                return typeof process !== 'undefined' ? process.env.API_KEY : undefined;
+            } catch (e) {
+                return undefined;
+            }
+        };
+
+        // --- Types ---
+        enum PhaseType {
+            NEW_MOON = "新月 (しんげつ)",
+            WAXING_CRESCENT = "三日月 (みかづき)",
+            FIRST_QUARTER = "上弦の月 (じょうげんのつき)",
+            WAXING_GIBBOUS = "十三夜 (じゅうさんや)",
+            FULL_MOON = "満月 (まんげつ)",
+            WANING_GIBBOUS = "十八夜 (じゅうはちや)",
+            LAST_QUARTER = "下弦の月 (かげんのつき)",
+            WANING_CRESCENT = "二十六夜 (にじゅうろくや)",
+        }
+
+        // --- Constants ---
+        const PHASE_DATA = [
+            {
+                type: PhaseType.NEW_MOON,
+                angle: 0,
+                description: "The moon is between the Earth and the Sun.",
+                kidDescription: "お月さまは、地球と太陽のあいだにいるよ。太陽の光が当たる場所が向こう側だから、地球からは真っ暗で見えないんだ。",
+            },
+            {
+                type: PhaseType.WAXING_CRESCENT,
+                angle: 45,
+                description: "A sliver of the moon becomes visible.",
+                kidDescription: "夕方の西の空に見える細いお月さまだよ。これからだんだん丸くなっていくよ。",
+            },
+            {
+                type: PhaseType.FIRST_QUARTER,
+                angle: 90,
+                description: "Half of the moon is visible.",
+                kidDescription: "右半分が光っているお月さまだよ。お昼ごろにのぼって、真夜中にしずむんだ。",
+            },
+            {
+                type: PhaseType.WAXING_GIBBOUS,
+                angle: 135,
+                description: "Most of the moon is visible.",
+                kidDescription: "満月まであと少し！とても明るくて、形が少しふくらんで見えるね。",
+            },
+            {
+                type: PhaseType.FULL_MOON,
+                angle: 180,
+                description: "The entire face of the moon is illuminated.",
+                kidDescription: "お月さま、地球、太陽が一直線にならんでいるよ。お月さまの全体に光が当たって、まんまるに見えるね！",
+            },
+            {
+                type: PhaseType.WANING_GIBBOUS,
+                angle: 225,
+                description: "The moon starts to shrink.",
+                kidDescription: "満月をすぎて、少しずつ欠けてきたお月さまだよ。",
+            },
+            {
+                type: PhaseType.LAST_QUARTER,
+                angle: 270,
+                description: "The other half of the moon is visible.",
+                kidDescription: "左半分が光っているお月さまだよ。真夜中にのぼって、お昼ごろにしずむんだ。",
+            },
+            {
+                type: PhaseType.WANING_CRESCENT,
+                angle: 315,
+                description: "Only a sliver remains before the new moon.",
+                kidDescription: "夜明け前の東の空に見える、細いお月さまだよ。もうすぐ新月にもどるね。",
+            },
+        ];
+
+        const ORBIT_RADIUS = 120;
+        const MOON_RADIUS = 15;
+        const EARTH_RADIUS = 30;
+        const SUN_RADIUS = 40;
+
+        // --- Utils ---
+        const normalizeAngle = (angle) => {
+            let a = angle % 360;
+            if (a < 0) a += 360;
+            return a;
+        };
+
+        const getPhaseInfo = (angle) => {
+            const normalized = normalizeAngle(angle);
+            const segment = 360 / 8;
+            const offset = segment / 2;
+            
+            if (normalized >= 360 - offset || normalized < 0 + offset) return PHASE_DATA.find(p => p.type === PhaseType.NEW_MOON);
+            if (normalized >= 45 - offset && normalized < 45 + offset) return PHASE_DATA.find(p => p.type === PhaseType.WAXING_CRESCENT);
+            if (normalized >= 90 - offset && normalized < 90 + offset) return PHASE_DATA.find(p => p.type === PhaseType.FIRST_QUARTER);
+            if (normalized >= 135 - offset && normalized < 135 + offset) return PHASE_DATA.find(p => p.type === PhaseType.WAXING_GIBBOUS);
+            if (normalized >= 180 - offset && normalized < 180 + offset) return PHASE_DATA.find(p => p.type === PhaseType.FULL_MOON);
+            if (normalized >= 225 - offset && normalized < 225 + offset) return PHASE_DATA.find(p => p.type === PhaseType.WANING_GIBBOUS);
+            if (normalized >= 270 - offset && normalized < 270 + offset) return PHASE_DATA.find(p => p.type === PhaseType.LAST_QUARTER);
+            if (normalized >= 315 - offset && normalized < 315 + offset) return PHASE_DATA.find(p => p.type === PhaseType.WANING_CRESCENT);
+            
+            return PHASE_DATA[0];
+        };
+
+        const getMoonPhasePath = (angle, radius) => {
+            const a = normalizeAngle(angle);
+            const rad = (a * Math.PI) / 180;
+            const isWaxing = a < 180;
+            const xRadius = radius * Math.cos(rad);
+            const startY = -radius;
+            const endY = radius;
+            
+            if (a === 0) return ""; 
+            if (Math.abs(a - 180) < 0.1) return `M 0 ${startY} A ${radius} ${radius} 0 1 1 0 ${endY} A ${radius} ${radius} 0 1 1 0 ${startY}`;
+
+            const sweepOuter = isWaxing ? 1 : 0; 
+            let d = `M 0 ${startY}`;
+            d += ` A ${radius} ${radius} 0 0 ${sweepOuter} 0 ${endY}`;
+            
+            const largeArc = 0;
+            const sweepInner = isWaxing ? (a < 90 ? 0 : 1) : (a < 270 ? 0 : 1);
+            d += ` A ${Math.abs(xRadius)} ${radius} 0 ${largeArc} ${sweepInner} 0 ${startY}`;
+            
+            return d;
+        };
+
+        // --- Services ---
+        const downloadBlob = (blob, filename) => {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        };
+
+        const exportSVG = (svgElement, filename) => {
+            const serializer = new XMLSerializer();
+            const source = serializer.serializeToString(svgElement);
+            const fullSvg = `<?xml version="1.0" standalone="no"?>\r\n` + source;
+            const blob = new Blob([fullSvg], { type: 'image/svg+xml;charset=utf-8' });
+            downloadBlob(blob, filename);
+        };
+
+        const generateGIF = async (angleGetter, angleSetter, rendererFn, totalFrames = 60) => {
+            return new Promise((resolve, reject) => {
+                if (typeof GIF === 'undefined') {
+                    alert('GIF library not loaded properly.');
+                    reject('GIF library missing');
+                    return;
+                }
+                const workerBlob = new Blob([`importScripts('https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.worker.js');`], { type: 'application/javascript' });
+                const workerUrl = URL.createObjectURL(workerBlob);
+                const gif = new GIF({
+                    workers: 2,
+                    quality: 10,
+                    workerScript: workerUrl,
+                    width: 800,
+                    height: 400
+                });
+                const originalAngle = angleGetter();
+                let currentFrame = 0;
+                const captureFrame = async () => {
+                    if (currentFrame >= totalFrames) {
+                        angleSetter(originalAngle); 
+                        gif.on('finished', (blob) => {
+                            downloadBlob(blob, 'moon-phases.gif');
+                            URL.revokeObjectURL(workerUrl);
+                            resolve();
+                        });
+                        gif.render();
+                        return;
+                    }
+                    const frameAngle = (currentFrame / totalFrames) * 360;
+                    angleSetter(frameAngle);
+                    await new Promise(r => setTimeout(r, 50));
+                    try {
+                        const canvas = await rendererFn();
+                        gif.addFrame(canvas, { delay: 100 });
+                        currentFrame++;
+                        captureFrame();
+                    } catch (e) {
+                        reject(e);
+                    }
+                };
+                captureFrame();
+            });
+        };
+
+        const svgToCanvas = (svgElement, width, height) => {
+            return new Promise((resolve, reject) => {
+                const serializer = new XMLSerializer();
+                const svgString = serializer.serializeToString(svgElement);
+                const img = new Image();
+                const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+                const url = URL.createObjectURL(svgBlob);
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = '#020617';
+                    ctx.fillRect(0, 0, width, height);
+                    ctx.drawImage(img, 0, 0, width, height);
+                    URL.revokeObjectURL(url);
+                    resolve(canvas);
+                };
+                img.onerror = (e) => {
+                    URL.revokeObjectURL(url);
+                    reject(e);
+                };
+                img.src = url;
+            });
+        };
+
+        // --- Components ---
+        const OrbitVisualizer = ({ angle, stars }) => {
+            const cx = 200;
+            const cy = 200;
+            const rad = (angle * Math.PI) / 180;
+            const moonX = cx + ORBIT_RADIUS * Math.cos(rad);
+            const moonY_CCW = cy - ORBIT_RADIUS * Math.sin(rad);
+
+            return (
+                <svg viewBox="0 0 400 400" className="w-full h-full bg-slate-900 rounded-xl shadow-inner border border-slate-700 overflow-hidden" id="orbit-svg">
+                    <defs>
+                        <filter id="sunGlow" x="-50%" y="-50%" width="200%" height="200%">
+                            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+                            <feMerge>
+                                <feMergeNode in="blur" />
+                                <feMergeNode in="SourceGraphic" />
+                            </feMerge>
+                        </filter>
+                    </defs>
+                    {stars.map((star, i) => (
+                        <circle key={i} cx={star.x} cy={star.y} r={star.size} fill="white" opacity={star.opacity} />
+                    ))}
+                    <g transform="translate(360, 200)">
+                        {[...Array(8)].map((_, i) => (
+                            <line key={i} x1="0" y1="0" x2="-80" y2={(i - 3.5) * 20} stroke="#fde047" strokeWidth="2" strokeDasharray="4 4" opacity="0.5" />
+                        ))}
+                        <circle cx="60" cy="0" r={SUN_RADIUS} fill="#fde047" filter="url(#sunGlow)" />
+                    </g>
+                    <circle cx={cx} cy={cy} r={ORBIT_RADIUS} fill="none" stroke="#475569" strokeWidth="1" strokeDasharray="4 4" />
+                    <g transform={`translate(${cx}, ${cy})`}>
+                        <circle r={EARTH_RADIUS + 2} fill="#3b82f6" opacity="0.3" />
+                        <circle r={EARTH_RADIUS} fill="#1d4ed8" />
+                        <path d="M -10 -5 Q 0 -20 15 -10 T 20 5 T 5 20 T -15 10 Z" fill="#15803d" opacity="0.8" />
+                    </g>
+                    <g transform={`translate(${moonX}, ${moonY_CCW})`}>
+                        <circle r={MOON_RADIUS} fill="#94a3b8" />
+                        <path d={`M 0 -${MOON_RADIUS} A ${MOON_RADIUS} ${MOON_RADIUS} 0 0 0 0 ${MOON_RADIUS} Z`} fill="#0f172a" opacity="0.9" />
+                    </g>
+                    <text x={350} y={380} fill="#fde047" fontSize="14" textAnchor="end" fontWeight="bold">太陽 (SUN)</text>
+                    <text x={cx} y={cy + EARTH_RADIUS + 20} fill="#3b82f6" fontSize="14" textAnchor="middle" fontWeight="bold">地球 (EARTH)</text>
+                    <text x={moonX} y={moonY_CCW - MOON_RADIUS - 10} fill="#cbd5e1" fontSize="12" textAnchor="middle">月</text>
+                </svg>
+            );
+        };
+
+        const MoonView = ({ angle, stars }) => {
+            const radius = 100;
+            const pathData = getMoonPhasePath(angle, radius);
+            
+            return (
+                <svg viewBox="0 0 400 400" className="w-full h-full bg-slate-900 rounded-xl shadow-inner border border-slate-700 overflow-hidden" id="phase-svg">
+                    <defs>
+                        <filter id="moonGlow" x="-50%" y="-50%" width="200%" height="200%">
+                            <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
+                            <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="goo" />
+                            <feComposite in="SourceGraphic" in2="goo" operator="atop"/>
+                        </filter>
+                        <clipPath id="litClip">
+                            <path d={pathData} />
+                        </clipPath>
+                    </defs>
+                    {stars.map((star, i) => (
+                        <circle key={`mv-${i}`} cx={star.x} cy={star.y} r={star.size} fill="white" opacity={star.opacity} />
+                    ))}
+                    <g transform="translate(200, 200)">
+                        <circle r={radius} fill="#1e293b" />
+                        <path d={pathData} fill="#f1f5f9" filter="url(#moonGlow)" />
+                        <g clipPath="url(#litClip)" opacity="0.3">
+                            <circle cx="-30" cy="-40" r="15" fill="#94a3b8" />
+                            <circle cx="40" cy="20" r="20" fill="#94a3b8" />
+                            <circle cx="-10" cy="50" r="10" fill="#94a3b8" />
+                            <circle cx="50" cy="-30" r="8" fill="#94a3b8" />
+                        </g>
+                    </g>
+                    <text x="200" y="360" fill="white" fontSize="16" textAnchor="middle" className="font-bold">地球から見た月</text>
+                </svg>
+            );
+        };
+
+        const Controls = ({ isPlaying, onTogglePlay, speed, onSpeedChange, angle, onAngleChange }) => {
+            return (
+                <div className="flex flex-col sm:flex-row items-center gap-4 p-4 bg-slate-800 rounded-xl border border-slate-700 shadow-lg w-full max-w-2xl mx-auto">
+                    <button onClick={onTogglePlay} className="flex items-center justify-center w-12 h-12 bg-indigo-500 hover:bg-indigo-600 text-white rounded-full transition-all shadow-md focus:ring-2 focus:ring-indigo-300">
+                        {isPlaying ? <Pause size={24} /> : <Play size={24} className="ml-1" />}
+                    </button>
+                    <div className="flex-1 w-full space-y-2">
+                        <div className="flex justify-between text-xs text-slate-300 font-bold">
+                            <span>操作 (Manual)</span>
+                            <span>{Math.round(angle)}°</span>
+                        </div>
+                        <input type="range" min="0" max="360" step="1" value={angle} onChange={(e) => onAngleChange(parseFloat(e.target.value))} className="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-indigo-400" />
+                    </div>
+                    <div className="flex flex-col w-full sm:w-32 space-y-1">
+                        <label className="text-xs text-slate-400 font-bold">速さ (Speed)</label>
+                        <input type="range" min="0.1" max="2.0" step="0.1" value={speed} onChange={(e) => onSpeedChange(parseFloat(e.target.value))} className="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-emerald-400" />
+                    </div>
+                </div>
+            );
+        };
+
+        // --- App ---
+        const App = () => {
+            const [angle, setAngle] = useState(0);
+            const [isPlaying, setIsPlaying] = useState(true);
+            const [speed, setSpeed] = useState(0.5);
+            const [stars, setStars] = useState([]);
+            const [isGeneratingGif, setIsGeneratingGif] = useState(false);
+            const [geminiExplanation, setGeminiExplanation] = useState(null);
+            const [loadingGemini, setLoadingGemini] = useState(false);
+
+            useEffect(() => {
+                const newStars = Array.from({ length: 50 }, () => ({
+                    x: Math.random() * 400,
+                    y: Math.random() * 400,
+                    size: Math.random() * 1.5 + 0.5,
+                    opacity: Math.random() * 0.5 + 0.2
+                }));
+                setStars(newStars);
+            }, []);
+
+            const requestRef = useRef();
+            const previousTimeRef = useRef();
+
+            const animate = useCallback((time) => {
+                if (previousTimeRef.current !== undefined) {
+                    const deltaTime = time - previousTimeRef.current;
+                    setAngle(prevAngle => (prevAngle + (speed * deltaTime * 0.05)) % 360);
+                }
+                previousTimeRef.current = time;
+                requestRef.current = requestAnimationFrame(animate);
+            }, [speed]);
+
+            useEffect(() => {
+                if (isPlaying) {
+                    requestRef.current = requestAnimationFrame(animate);
+                } else {
+                    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+                    previousTimeRef.current = undefined;
+                }
+                return () => {
+                    if (requestRef.current) cancelAnimationFrame(requestRef.current);
+                };
+            }, [isPlaying, animate]);
+
+            const handleAngleChange = (newAngle) => {
+                setIsPlaying(false);
+                setAngle(newAngle);
+                setGeminiExplanation(null);
+            };
+
+            const phaseInfo = getPhaseInfo(angle);
+
+            const handleDownloadSVG = () => {
+                const orbitSvg = document.getElementById('orbit-svg');
+                const phaseSvg = document.getElementById('phase-svg');
+                if (orbitSvg) exportSVG(orbitSvg, 'orbit-view.svg');
+                if (phaseSvg) setTimeout(() => exportSVG(phaseSvg, 'moon-view.svg'), 200);
+            };
+
+            const handleDownloadGIF = async () => {
+                setIsPlaying(false);
+                setIsGeneratingGif(true);
+                try {
+                    await generateGIF(
+                        () => angle,
+                        setAngle,
+                        async () => {
+                            const orbitSvg = document.getElementById('orbit-svg');
+                            const phaseSvg = document.getElementById('phase-svg');
+                            const canvas = document.createElement('canvas');
+                            canvas.width = 800;
+                            canvas.height = 400;
+                            const ctx = canvas.getContext('2d');
+                            const c1 = await svgToCanvas(orbitSvg, 400, 400);
+                            const c2 = await svgToCanvas(phaseSvg, 400, 400);
+                            ctx.drawImage(c1, 0, 0);
+                            ctx.drawImage(c2, 400, 0);
+                            ctx.fillStyle = "white";
+                            ctx.font = "20px Zen Maru Gothic";
+                            ctx.fillText(`Phase: ${phaseInfo.type}`, 20, 380);
+                            return canvas;
+                        }
+                    );
+                } catch (error) {
+                    console.error(error);
+                    alert("Failed to generate GIF. Please try again.");
+                } finally {
+                    setIsGeneratingGif(false);
+                    setIsPlaying(true);
+                }
+            };
+
+            const askDrMoon = async () => {
+                const apiKey = getApiKey();
+                if (!apiKey) {
+                    alert("Dr. Moon is sleeping (No API Key configured).");
+                    return;
+                }
+                setLoadingGemini(true);
+                try {
+                    const ai = new GoogleGenAI({ apiKey: apiKey });
+                    const prompt = `
+                        あなたは「月博士」です。小学生に向けて、今の月の形「${phaseInfo.type}」について、
+                        面白くてわかりやすい豆知識を1つ教えてください。
+                        100文字以内で、絵文字を使って楽しく話してください。
+                    `;
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-2.5-flash',
+                        contents: prompt,
+                    });
+                    setGeminiExplanation(response.text);
+                } catch (e) {
+                    console.error(e);
+                    setGeminiExplanation("ごめんね、ちょっと通信の調子が悪いみたい。");
+                } finally {
+                    setLoadingGemini(false);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center p-4 sm:p-8 font-sans">
+                    <header className="mb-8 text-center">
+                        <h1 className="text-3xl sm:text-4xl font-bold text-indigo-300 mb-2 tracking-wider">
+                            月の満ち欠け (Moon Phases)
+                        </h1>
+                        <p className="text-slate-400">
+                            地球、月、太陽の位置と見え方を学ぼう！
+                        </p>
+                    </header>
+                    <main className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                        <div className="flex flex-col items-center">
+                            <h2 className="text-xl font-bold mb-4 text-emerald-400 flex items-center">
+                                <span className="bg-emerald-900/50 px-3 py-1 rounded-full mr-2 text-sm">1</span> 
+                                宇宙から見たようす
+                            </h2>
+                            <div className="w-full aspect-square max-w-md relative group">
+                                <OrbitVisualizer angle={angle} stars={stars} />
+                            </div>
+                        </div>
+                        <div className="flex flex-col items-center">
+                            <h2 className="text-xl font-bold mb-4 text-indigo-400 flex items-center">
+                                <span className="bg-indigo-900/50 px-3 py-1 rounded-full mr-2 text-sm">2</span> 
+                                地球から見たようす
+                            </h2>
+                            <div className="w-full aspect-square max-w-md relative group">
+                                <MoonView angle={angle} stars={stars} />
+                            </div>
+                        </div>
+                    </main>
+                    <section className="w-full max-w-2xl bg-slate-900/50 backdrop-blur rounded-2xl p-6 mb-8 border border-slate-800">
+                        <div className="text-center">
+                            <h3 className="text-3xl font-bold text-yellow-200 mb-2">{phaseInfo.type}</h3>
+                            <p className="text-lg text-slate-300 mb-4">{phaseInfo.kidDescription}</p>
+                            {geminiExplanation && (
+                                <div className="mt-4 bg-indigo-950/50 border border-indigo-500/30 p-4 rounded-xl animate-fade-in">
+                                    <h4 className="text-sm font-bold text-indigo-300 mb-1">🌙 月博士の一言メモ:</h4>
+                                    <p className="text-indigo-100 text-sm leading-relaxed">{geminiExplanation}</p>
+                                </div>
+                            )}
+                            <button onClick={askDrMoon} disabled={loadingGemini} className="mt-4 text-sm flex items-center justify-center gap-2 mx-auto text-indigo-400 hover:text-indigo-300 transition-colors">
+                                {loadingGemini ? <Loader2 className="animate-spin" size={16}/> : <MessageCircle size={16}/>}
+                                <span>もっと詳しく聞く (Ask Dr. Moon)</span>
+                            </button>
+                        </div>
+                    </section>
+                    <div className="w-full mb-8">
+                        <Controls isPlaying={isPlaying} onTogglePlay={() => setIsPlaying(!isPlaying)} speed={speed} onSpeedChange={setSpeed} angle={angle} onAngleChange={handleAngleChange} />
+                    </div>
+                    <div className="flex flex-wrap gap-4 justify-center">
+                        <button onClick={handleDownloadSVG} className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-bold transition-all border border-slate-600">
+                            <Download size={20} />
+                            SVGを保存
+                        </button>
+                        <button onClick={handleDownloadGIF} disabled={isGeneratingGif} className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-lg font-bold transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed">
+                            {isGeneratingGif ? <Loader2 className="animate-spin" size={20} /> : <Download size={20} />}
+                            アニメGIFを保存
+                        </button>
+                    </div>
+                    <footer className="mt-12 text-slate-600 text-sm text-center">
+                        <p>© 2024 Moon Phase Explorer. Educational Tool.</p>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
