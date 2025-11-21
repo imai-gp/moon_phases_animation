@@ -13,7 +13,6 @@
         body {
             font-family: 'Zen Maru Gothic', sans-serif;
         }
-        /* Custom scrollbar for better aesthetics */
         ::-webkit-scrollbar {
             width: 8px;
             height: 8px;
@@ -28,8 +27,17 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #64748b; 
         }
+        /* Animation classes */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in {
+            animation: fadeIn 0.5s ease-out forwards;
+        }
     </style>
-  <!-- Update importmap to use reliable ESM CDN -->
+  
+  <!-- Reliable Import Map for Browser Environment -->
   <script type="importmap">
 {
   "imports": {
@@ -46,24 +54,22 @@
   <body class="bg-slate-950 text-slate-50 overflow-x-hidden">
     <div id="root"></div>
     
-    <!-- Inline Application Logic for No-Build Deployment -->
+    <!-- Inline Application Logic -->
     <script type="text/babel" data-type="module" data-presets="react,typescript">
         import React, { useState, useEffect, useRef, useCallback } from 'react';
         import { createRoot } from 'react-dom/client';
         import { Play, Pause, RotateCcw, Download, MessageCircle, Loader2 } from 'lucide-react';
         import { GoogleGenAI } from "@google/genai";
 
-        // Safely access process.env for the API Key without crashing in browser
-        const getApiKey = () => {
-            try {
-                return typeof process !== 'undefined' && process.env ? process.env.API_KEY : undefined;
-            } catch (e) {
-                return undefined;
-            }
-        };
+        // --- Polyfills & Safe Guards ---
+        // Ensure process.env exists to prevent crashes on static hosts
+        if (typeof window !== 'undefined' && !window.process) {
+            window.process = { env: { API_KEY: '' } };
+        }
 
-        // --- Types & Constants ---
-        // Replaced enum with const object to prevent "ReferenceError: PhaseType is not defined" in Babel Standalone
+        // --- 1. Definitions (Must come first to avoid ReferenceErrors) ---
+        
+        // Replaced enum with const object
         const PhaseType = {
             NEW_MOON: "新月 (しんげつ)",
             WAXING_CRESCENT: "三日月 (みかづき)",
@@ -131,7 +137,8 @@
         const EARTH_RADIUS = 30;
         const SUN_RADIUS = 40;
 
-        // --- Utils ---
+        // --- 2. Utils ---
+
         const normalizeAngle = (angle) => {
             let a = angle % 360;
             if (a < 0) a += 360;
@@ -177,7 +184,8 @@
             return d;
         };
 
-        // --- Services ---
+        // --- 3. Services ---
+
         const downloadBlob = (blob, filename) => {
             const url = URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -268,7 +276,8 @@
             });
         };
 
-        // --- Components ---
+        // --- 4. Components ---
+
         const OrbitVisualizer = ({ angle, stars }) => {
             const cx = 200;
             const cy = 200;
@@ -368,7 +377,7 @@
             );
         };
 
-        // --- App ---
+        // --- 5. App ---
         const App = () => {
             const [angle, setAngle] = useState(0);
             const [isPlaying, setIsPlaying] = useState(true);
@@ -461,9 +470,10 @@
             };
 
             const askDrMoon = async () => {
-                const apiKey = getApiKey();
-                if (!apiKey) {
-                    alert("Dr. Moon is sleeping (No API Key configured).");
+                const apiKey = process.env.API_KEY;
+                
+                if (!apiKey || apiKey === '') {
+                    alert("月博士は今お休み中です（APIキーが設定されていません）。");
                     return;
                 }
                 setLoadingGemini(true);
@@ -481,7 +491,7 @@
                     setGeminiExplanation(response.text);
                 } catch (e) {
                     console.error(e);
-                    setGeminiExplanation("ごめんね、ちょっと通信の調子が悪いみたい。");
+                    setGeminiExplanation("ごめんね、通信がうまくいかなかったみたい。また後で聞いてね！");
                 } finally {
                     setLoadingGemini(false);
                 }
